@@ -1,236 +1,189 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../database');
+const pool = require('../database');
+const auth = require('../middlewares/auth');
+const roleGrades = require('../middlewares/roleGrades');
 
-// Obtener asistencias
-router.get("/", (req, res) => {
-    const sql = `
-        SELECT
-            a.ID_ASISTENCIA,
-            p.APELLIDO_PATERNO,
-            p.APELLIDO_MATERNO,
-            p.NOMBRES,
-            g.NRO_GRADO,
-            s.SECCION,
-            a.FECHA,
-            a.ESTADO_ASISTENCIA,
-            a.OBSERVACION
-        FROM \`asistencia\` a
-        INNER JOIN \`estudiante\` e ON a.ID_ESTUDIANTE = e.ID_ESTUDIANTE
-        INNER JOIN \`persona\` p ON e.ID_PERSONA = p.ID_PERSONA
-        INNER JOIN \`grado_estudiante\` g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
-        INNER JOIN \`seccion\` s ON g.ID_SECCION = s.ID_SECCION
-        ORDER BY a.FECHA DESC
-    `;
+// Aplica autenticación a todas las rutas
+router.use(auth);
 
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error('❌ Error al obtener asistencias:', err);
-            return res.status(500).json({ error: 'Error al obtener asistencias' });
-        }
-        res.json(results);
-    });
+/**
+ * Helper para filtrar por grados permitidos
+ * Si es admin, no filtra nada
+ * Si es auxiliar, agrega condición WHERE
+ */
+function addGradeFilter(sqlBase, user) {
+  if (user.role === 'administrador') {
+    return { sql: sqlBase, params: [] };
+  } else {
+    const grades = user.allowedGrades || [];
+    const placeholders = grades.map(() => '?').join(',');
+    return {
+      sql: `${sqlBase} WHERE grado IN (${placeholders})`,
+      params: grades
+    };
+  }
+}
+
+// GET todas las asistencias (filtradas por rol)
+router.get('/', async (req, res) => {
+  try {
+    const { sql, params } = addGradeFilter(
+      'SELECT * FROM asistencias',
+      req.user
+    );
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener asistencias' });
+  }
 });
 
-// Registrar nueva asistencia
-router.post("/", (req, res) => {
-    const { id_estudiante, fecha, estado_asistencia, observacion } = req.body;
+// GET historial (filtradas por rol)
+router.get('/historial', async (req, res) => {
+  try {
+    const { sql, params } = addGradeFilter(
+      'SELECT * FROM asistencias_historial',
+      req.user
+    );
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener historial' });
+  }
+});
 
-    if (!id_estudiante || !fecha || !estado_asistencia) {
-        return res.status(400).json({ error: 'Faltan datos obligatorios' });
+// GET asistencias por grado y sección
+router.get('/:grado/:seccion', roleGrades, async (req, res) => {
+  try {
+    const { grado, seccion } = req.params;
+    const [rows] = await pool.query(
+      'SELECT * FROM asistencias WHERE grado = ? AND seccion = ?',
+      [grado, seccion]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener asistencias' });
+  }
+});
+
+// GET asistencias por grado, sección y fecha
+router.get('/:grado/:seccion/:fecha', roleGrades, async (req, res) => {
+  try {
+    const { grado, seccion, fecha } = req.params;
+    const [rows] = await pool.query(
+      'SELECT * FROM asistencias WHERE grado = ? AND seccion = ? AND fecha = ?',
+      [grado, seccion, fecha]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener asistencias' });
+  }
+});
+
+// POST nueva asistencia
+router.post('/', async (req, res) => {
+  const { id_estudiante, fecha, estado } = req.body;
+
+  try {
+    // Verificar que el estudiante pertenece a un grado permitido
+    const [alumno] = await pool.query(
+      'SELECT grado FROM alumnos WHERE id_estudiante = ?',
+      [id_estudiante]
+    );
+
+    if (!alumno.length) {
+      return res.status(404).json({ error: 'Estudiante no encontrado' });
     }
 
-    const sql = `
-        INSERT INTO \`asistencia\` (ID_ESTUDIANTE, FECHA, ESTADO_ASISTENCIA, OBSERVACION)
-        VALUES (?, ?, ?, ?)
-    `;
+    if (
+      req.user.role !== 'administrador' &&
+      !req.user.allowedGrades.includes(alumno[0].grado)
+    ) {
+      return res.status(403).json({ error: 'No tienes permiso para este grado' });
+    }
 
-    db.query(sql, [id_estudiante, fecha, estado_asistencia, observacion], (err, result) => {
-        if (err) {
-            console.error('❌ Error al registrar la asistencia:', err);
-            return res.status(500).json({ error: 'Error al registrar la asistencia' });
-        }
-        res.status(201).json({ message: '✅ Asistencia registrada con éxito', asistenciaId: result.insertId });
-    });
+    await pool.query(
+      'INSERT INTO asistencias (id_estudiante, fecha, estado) VALUES (?, ?, ?)',
+      [id_estudiante, fecha, estado]
+    );
+
+    res.json({ message: 'Asistencia registrada' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al registrar asistencia' });
+  }
 });
 
-// Actualizar asistencia por ID y registrar en historial
-router.put("/:id_asistencia", (req, res) => {
-    const { id_asistencia } = req.params;
-    const { estado_asistencia, observacion } = req.body;
+// PUT actualizar asistencia
+router.put('/:id_asistencia', async (req, res) => {
+  const { id_asistencia } = req.params;
+  const { estado } = req.body;
 
-    const getAsistenciaSql = `
-        SELECT ID_ESTUDIANTE, ESTADO_ASISTENCIA, OBSERVACION, FECHA
-        FROM \`asistencia\`
-        WHERE ID_ASISTENCIA = ?
-    `;
+  try {
+    // Verificar grado del registro antes de actualizar
+    const [registro] = await pool.query(
+      `SELECT a.grado 
+       FROM asistencias asi
+       JOIN alumnos a ON asi.id_estudiante = a.id_estudiante
+       WHERE asi.id_asistencia = ?`,
+      [id_asistencia]
+    );
 
-    // Obtener asistencia por ID para registrar en historial
-    db.query(getAsistenciaSql, [id_asistencia], (err, results) => {
-        if (err) {
-            console.error('❌ Error al obtener asistencia:', err);
-            return res.status(500).json({ error: 'Error al obtener asistencia' });
-        }
+    if (!registro.length) {
+      return res.status(404).json({ error: 'Asistencia no encontrada' });
+    }
 
-        if (results.length === 0) {
-            return res.status(404).json({ error: 'Asistencia no encontrada' });
-        }
+    if (
+      req.user.role !== 'administrador' &&
+      !req.user.allowedGrades.includes(registro[0].grado)
+    ) {
+      return res.status(403).json({ error: 'No tienes permiso para este grado' });
+    }
 
-        const asistencia = results[0];
+    await pool.query(
+      'UPDATE asistencias SET estado = ? WHERE id_asistencia = ?',
+      [estado, id_asistencia]
+    );
 
-        const insertHistorialSql = `
-            INSERT INTO \`historial_asistencia\` (
-                ID_ASISTENCIA,
-                ID_ESTUDIANTE,
-                FECHA,
-                ESTADO_ANTERIOR,
-                ESTADO_NUEVO,
-                OBSERVACION_ANTERIOR,
-                OBSERVACION_NUEVA
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `;
-
-        // Insertar en historial antes de actualizar
-        db.query(insertHistorialSql, [
-            id_asistencia,
-            asistencia.ID_ESTUDIANTE,
-            asistencia.FECHA,
-            asistencia.ESTADO_ASISTENCIA,
-            estado_asistencia,
-            asistencia.OBSERVACION,
-            observacion
-        ], (err) => {
-            if (err) {
-                console.error('❌ Error al insertar en historial:', err);
-                return res.status(500).json({ error: 'Error al insertar en historial' });
-            }
-
-            const updateSql = `
-                UPDATE \`asistencia\`
-                SET ESTADO_ASISTENCIA = ?, OBSERVACION = ?
-                WHERE ID_ASISTENCIA = ?
-            `;
-
-            // Actualizar asistencia
-            db.query(updateSql, [estado_asistencia, observacion, id_asistencia], (err) => {
-                if (err) {
-                    console.error('❌ Error al actualizar asistencia:', err);
-                    return res.status(500).json({ error: 'Error al actualizar asistencia' });
-                }
-
-                res.json({ message: '✅ Asistencia actualizada y registrada en historial con éxito' });
-            });
-        });
-    });
+    res.json({ message: 'Asistencia actualizada' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar asistencia' });
+  }
 });
 
-// Eliminar asistencia
-router.delete("/:id_asistencia", (req, res) => {
-    const { id_asistencia } = req.params;
+// DELETE eliminar asistencia
+router.delete('/:id_asistencia', async (req, res) => {
+  const { id_asistencia } = req.params;
 
-    const sql = `
-        DELETE FROM \`asistencia\`
-        WHERE ID_ASISTENCIA = ?
-    `;
+  try {
+    // Verificar grado antes de eliminar
+    const [registro] = await pool.query(
+      `SELECT a.grado 
+       FROM asistencias asi
+       JOIN alumnos a ON asi.id_estudiante = a.id_estudiante
+       WHERE asi.id_asistencia = ?`,
+      [id_asistencia]
+    );
 
-    db.query(sql, [id_asistencia], (err) => {
-        if (err) {
-            console.error('❌ Error al eliminar la asistencia:', err);
-            return res.status(500).json({ error: 'Error al eliminar la asistencia' });
-        }
-        res.json({ message: '✅ Asistencia eliminada con éxito' });
-    });
+    if (!registro.length) {
+      return res.status(404).json({ error: 'Asistencia no encontrada' });
+    }
+
+    if (
+      req.user.role !== 'administrador' &&
+      !req.user.allowedGrades.includes(registro[0].grado)
+    ) {
+      return res.status(403).json({ error: 'No tienes permiso para este grado' });
+    }
+
+    await pool.query('DELETE FROM asistencias WHERE id_asistencia = ?', [
+      id_asistencia
+    ]);
+
+    res.json({ message: 'Asistencia eliminada' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al eliminar asistencia' });
+  }
 });
-
-// Obtener historial de asistencias
-router.get("/historial", (req, res) => {
-    const sql = `
-        SELECT
-            ID_HISTORIAL,
-            ID_ASISTENCIA,
-            FECHA,
-            ESTADO_ANTERIOR,
-            ESTADO_NUEVO,
-            OBSERVACION_ANTERIOR,
-            OBSERVACION_NUEVA,
-            FECHA_MODIFICACION
-        FROM \`historial_asistencia\`
-        ORDER BY FECHA_MODIFICACION DESC
-    `;
-
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error('❌ Error al obtener las asistencias:', err);
-            return res.status(500).json({ error: 'Error al obtener las asistencias' });
-        }
-        res.json(results);
-    });
-});
-
-// Obtener asistencias filtradas por grado y sección
-router.get("/:grado/:seccion", (req, res) => {
-    const { grado, seccion } = req.params;
-    const sql = `
-    SELECT
-      a.ID_ASISTENCIA,
-      p.APELLIDO_PATERNO,
-      p.APELLIDO_MATERNO,
-      p.NOMBRES,
-      g.NRO_GRADO,
-      s.SECCION,
-      a.FECHA,
-      a.ESTADO_ASISTENCIA,
-      a.OBSERVACION
-    FROM asistencia a
-    INNER JOIN estudiante e ON a.ID_ESTUDIANTE = e.ID_ESTUDIANTE
-    INNER JOIN persona p ON e.ID_PERSONA = p.ID_PERSONA
-    INNER JOIN grado_estudiante g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
-    INNER JOIN seccion s ON g.ID_SECCION = s.ID_SECCION
-    WHERE g.NRO_GRADO = ? AND s.ID_SECCION = ?
-    ORDER BY a.FECHA DESC
-  `;
-
-    db.query(sql, [grado, seccion], (err, results) => {
-        if (err) {
-            console.error('❌ Error al obtener asistencias filtradas:', err);
-            return res.status(500).json({ error: 'Error al obtener asistencias' });
-        }
-        res.json(results);
-    });
-});
-
-// Obtener asistencias filtradas por grado, sección y fecha
-router.get("/:grado/:seccion/:fecha", (req, res) => {
-    const { grado, seccion, fecha } = req.params;
-    const sql = `
-    SELECT
-      a.ID_ASISTENCIA,
-      p.APELLIDO_PATERNO,
-      p.APELLIDO_MATERNO,
-      p.NOMBRES,
-      g.NRO_GRADO,
-      s.SECCION,
-      a.FECHA,
-      a.ESTADO_ASISTENCIA,
-      a.OBSERVACION
-    FROM asistencia a
-    INNER JOIN estudiante e ON a.ID_ESTUDIANTE = e.ID_ESTUDIANTE
-    INNER JOIN persona p ON e.ID_PERSONA = p.ID_PERSONA
-    INNER JOIN grado_estudiante g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
-    INNER JOIN seccion s ON g.ID_SECCION = s.ID_SECCION
-    WHERE g.NRO_GRADO = ? AND s.ID_SECCION = ? AND DATE(a.FECHA) = ?
-    ORDER BY a.FECHA DESC
-  `;
-
-    db.query(sql, [grado, seccion, fecha], (err, results) => {
-        if (err) {
-            console.error("❌ Error al obtener asistencias filtradas:", err);
-            return res.status(500).json({ error: "Error al obtener asistencias" });
-        }
-        res.json(results);
-    });
-});
-
 
 module.exports = router;
