@@ -1,39 +1,64 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const db = require('../database');
+const db = require("../database");
+const auth = require("../middlewares/auth");
+const roleGrades = require("../middlewares/roleGrades");
 
-// Obtener asistencias del mes y año especificados
-router.get('/asistencias-mes', (req, res) => {
-    const { mes, anio } = req.query;
+// Reporte mensual de asistencias
+router.get("/", auth, roleGrades, (req, res) => {
+  const { mes, anio } = req.query;
+  const { rol } = req.user;
 
-    const query = `
-        SELECT 
-        e.id_estudiante, 
-        p.apellido_paterno, 
-        p.apellido_materno, 
-        p.nombres, 
-        ge.nro_grado, 
-        s.seccion,
-        a.fecha, 
-        a.estado_asistencia
-        FROM estudiante e
-        INNER JOIN persona p ON e.id_persona = p.id_persona
-        INNER JOIN grado_estudiante ge ON ge.id_estudiante = e.id_estudiante
-        INNER JOIN seccion s ON s.id_seccion = ge.id_seccion
-        LEFT JOIN asistencia a 
-        ON a.id_estudiante = e.id_estudiante
-        AND MONTH(a.fecha) = ? AND YEAR(a.fecha) = ?
-        ORDER BY ge.nro_grado, s.seccion, p.apellido_paterno, p.apellido_materno;
+  if (!mes || !anio) {
+    return res.status(400).json({ error: "Faltan parámetros mes y año" });
+  }
+
+  // Permisos definidos según rol
+  const permisos = {
+    administrador: [], // sin restricción
+    auxiliar_mañana: [4, 5],
+    auxiliar_tarde: [1, 2, 3],
+  };
+
+  const gradosPermitidos = permisos[rol] || [];
+
+  // SQL base
+  let sql = `
+    SELECT 
+      g.NRO_GRADO,
+      s.SECCION,
+      COUNT(CASE WHEN a.ESTADO = 'asistio' THEN 1 END) AS total_asistencias,
+      COUNT(CASE WHEN a.ESTADO = 'falta' THEN 1 END) AS total_faltas,
+      COUNT(CASE WHEN a.ESTADO = 'tardanza' THEN 1 END) AS total_tardanzas
+    FROM asistencia a
+    JOIN estudiante e ON a.ID_ESTUDIANTE = e.ID_ESTUDIANTE
+    JOIN persona p ON e.ID_PERSONA = p.ID_PERSONA
+    JOIN grado_estudiante g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
+    JOIN seccion s ON g.ID_SECCION = s.ID_SECCION
+    JOIN anio_lectivo al ON g.ID_ANIO_LECTIVO = al.ID_ANIO_LECTIVO
+    WHERE MONTH(a.FECHA) = ? AND YEAR(a.FECHA) = ?
+      AND al.NRO_ANIO = ?
   `;
 
-    db.query(query, [mes, anio], (err, results) => {
-        if (err) {
-            console.error('Error consultando asistencias:', err);
-            res.status(500).json({ error: 'Error en servidor' });
-        } else {
-            res.json(results);
-        }
-    });
+  const params = [mes, anio, anio];
+
+  // Si no es admin → filtrar por grados permitidos
+  if (rol !== "administrador") {
+    sql += ` AND g.NRO_GRADO IN (?)`;
+    params.push(gradosPermitidos);
+  }
+
+  sql += ` GROUP BY g.NRO_GRADO, s.SECCION ORDER BY g.NRO_GRADO, s.SECCION`;
+
+  db.query(sql, params, (err, results) => {
+    if (err) {
+      console.error("❌ Error al obtener el reporte mensual:", err);
+      return res.status(500).json({ error: "Error al obtener el reporte mensual" });
+    }
+    res.json(results);
+  });
 });
 
 module.exports = router;
+// Nota: Este endpoint asume que los roles y sus permisos están definidos en el middleware roleGrades.js
+// y que el middleware authMiddleware.js agrega el usuario a req.user

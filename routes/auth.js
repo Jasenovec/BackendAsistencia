@@ -1,59 +1,79 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const pool = require('../database');
+const express = require("express");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const pool = require("../database");
 
 const router = express.Router();
 
 // POST /auth/login
-router.post('/login', async (req, res) => {
+router.post("/login", async (req, res) => {
   const { usuario, password } = req.body;
 
   try {
+    // Verificar si el usuario existe
     const [rows] = await pool.query(
-      'SELECT id_usuario, usuario, password, rol FROM usuarios WHERE usuario = ?',
+      `SELECT 
+        ua.USUARIO, 
+        ua.CONTRASENA AS contrasena, 
+        r.CODIGO_ROL, 
+        r.NIVEL, 
+        r.ROL
+      FROM usuario_administrativo ua
+      JOIN rol r ON ua.ID_ROL = r.ID_ROL
+      WHERE ua.USUARIO = ?`,
       [usuario]
     );
 
     if (rows.length === 0) {
-      return res.status(401).json({ message: 'Usuario no encontrado' });
+      return res.status(401).json({ message: "Usuario no encontrado" });
     }
 
     const user = rows[0];
-    const match = await bcrypt.compare(password, user.password);
+
+    // Comparar contraseñas
+    const match = await bcrypt.compare(password, user.contrasena);
+
     if (!match) {
-      return res.status(401).json({ message: 'Contraseña incorrecta' });
+      return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
+    // Generar token
     const token = jwt.sign(
-      { id_usuario: user.id_usuario, rol: user.rol },
+      {
+        usuario: user.USUARIO,
+        rol: user.CODIGO_ROL,
+        nivel: user.NIVEL,
+      },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
+      { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
     );
 
-    res.json({ token });
-  } catch (error) {
-    console.error('Error en login:', error);
-    res.status(500).json({ message: 'Error en el servidor' });
+    res.json({
+      message: "Login exitoso",
+      token,
+      usuario: user.USUARIO,
+      rol: user.ROL,
+      codigoRol: user.CODIGO_ROL,
+    });
+  } catch (err) {
+    console.error("Error en login:", err);
+    res.status(500).json({ message: "Error en el servidor" });
   }
 });
 
 // GET /auth/me
-router.get('/me', require('../middlewares/auth'), async (req, res) => {
+router.get("/me", (req, res) => {
+  const token = req.headers["authorization"]?.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ message: "Token requerido" });
+  }
+
   try {
-    const [rows] = await pool.query(
-      'SELECT id_usuario, usuario, rol FROM usuarios WHERE id_usuario = ?',
-      [req.user.id_usuario]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Usuario no encontrado' });
-    }
-
-    res.json(rows[0]);
-  } catch (error) {
-    console.error('Error en /me:', error);
-    res.status(500).json({ message: 'Error en el servidor' });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    res.json({ usuario: decoded.usuario, rol: decoded.rol, nivel: decoded.nivel });
+  } catch (err) {
+    return res.status(403).json({ message: "Token inválido" });
   }
 });
 

@@ -26,7 +26,7 @@ function addGradeFilter(sqlBase, user) {
 }
 
 // GET todas las asistencias (filtradas por rol)
-router.get('/', async (req, res) => {
+router.get('/', roleGrades, async (req, res) => {
   try {
     const { sql, params } = addGradeFilter(
       'SELECT * FROM asistencias',
@@ -82,7 +82,7 @@ router.get('/:grado/:seccion/:fecha', roleGrades, async (req, res) => {
 });
 
 // POST nueva asistencia
-router.post('/', async (req, res) => {
+router.post('/', roleGrades, async (req, res) => {
   const { id_estudiante, fecha, estado } = req.body;
 
   try {
@@ -115,7 +115,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT actualizar asistencia
-router.put('/:id_asistencia', async (req, res) => {
+router.put('/:id_asistencia', roleGrades, async (req, res) => {
   const { id_asistencia } = req.params;
   const { estado } = req.body;
 
