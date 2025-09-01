@@ -29,7 +29,7 @@ const authRoutes = require('./routes/auth');
 app.use('/estudiante', estudianteRoutes);
 app.use('/asistencia', asistenciaRoutes);
 app.use('/parametros', parametrosRoutes);
-app.use('/api', asistenciasMesRoutes);
+app.use('/asistencia-mes', asistenciasMesRoutes);
 app.use('/auth', authRoutes);
 
 // Ruta de prueba para verificar que el servidor está funcionando
