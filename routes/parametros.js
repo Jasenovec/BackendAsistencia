@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database');
+const auth = require('../middlewares/auth');
+
+// ✅ Solo autenticación global
+router.use(auth);
 
 // Obtener grados
 router.get('/grados', (req, res) => {
@@ -14,6 +18,7 @@ router.get('/grados', (req, res) => {
   });
 });
 
+// Obtener secciones
 router.get('/secciones', (req, res) => {
   const sql = `SELECT ID_SECCION, SECCION FROM seccion ORDER BY SECCION ASC`;
   db.query(sql, (err, results) => {

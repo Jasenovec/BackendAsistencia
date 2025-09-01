@@ -1,10 +1,14 @@
-
 const express = require('express');
 const router = express.Router();
 const db = require('../database');
+const auth = require('../middlewares/auth');
+const roleGrades = require('../middlewares/roleGrades');
 
-// Ruta para obtener todos los alumnos
-router.get("/:grado/:seccion", (req, res) => {
+// ✅ Aplico autenticación a todo el router
+router.use(auth);
+
+// Ruta para obtener todos los alumnos de un grado/sección
+router.get("/:grado/:seccion", roleGrades, (req, res) => {
     const { grado, seccion } = req.params;
     const anioLectivo = 2025;
     const sql = `
@@ -34,10 +38,8 @@ router.get("/:grado/:seccion", (req, res) => {
             return res.status(500).json({ error: 'Error al obtener los estudiantes' });
         } else {
             res.json(results);
-
         }
     });
 });
 
 module.exports = router;
-
