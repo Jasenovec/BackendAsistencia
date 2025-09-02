@@ -28,7 +28,7 @@ const authRoutes = require("./routes/auth");
 app.use('/estudiante', estudianteRoutes);
 app.use('/asistencia', asistenciaRoutes);
 app.use('/parametros', parametrosRoutes);
-app.use('/asistencia-mes', asistenciasMesRoutes);
+app.use('/asistencias-mes', asistenciasMesRoutes);
 app.use('/auth', authRoutes);
 
 // Ruta de prueba

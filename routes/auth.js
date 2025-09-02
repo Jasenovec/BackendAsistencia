@@ -6,6 +6,24 @@ const pool = require('../database');
 const router = express.Router();
 
 /**
+ * 🔐 AUTH ENDPOINTS (POSTMAN)
+ *
+ * # Login
+ * POST http://localhost:3000/auth/login
+ * Body (JSON):
+ * {
+ *   "usuario": "admin",         // o "aux_mañana", "aux_tarde"
+ *   "password": "admin"        // la contraseña real encriptada en DB
+ * }
+ *
+ * # Obtener usuario actual (requiere token en Authorization)
+ * GET http://localhost:3000/auth/me
+ * Headers:
+ *   Authorization: Bearer <TOKEN_JWT>
+ */
+
+
+/**
  * POST /auth/login
  * Body: { usuario, password }
  */
