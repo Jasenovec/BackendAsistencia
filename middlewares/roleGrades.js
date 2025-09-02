@@ -1,23 +1,15 @@
 // middlewares/roleGrades.js
 const pool = require('../database');
 
-/**
- * Obtiene grados y secciones permitidas para el rol del usuario.
- * - Admin => sin restricciones (isAdmin=true)
- * - Auxiliares => allowedGrades a partir de rol_grado.GRADO
- *                 allowedSections se calcula como todas las secciones (ID_SECCION) que existan para esos grados
- *                 en el año lectivo configurado.
- */
 module.exports = async (req, res, next) => {
   try {
     const { codigo_rol, nivel_rol } = req.user || {};
 
-    // Falla si no hay info de rol en el token
     if (!codigo_rol && !nivel_rol) {
       return res.status(401).json({ message: 'Token sin información de rol' });
     }
 
-    // Admin: sin restricciones
+    // Admin por código o por nivel=1
     const isAdmin = codigo_rol === 'administrador' || Number(nivel_rol) === 1;
     if (isAdmin) {
       req.user.isAdmin = true;
@@ -26,7 +18,7 @@ module.exports = async (req, res, next) => {
       return next();
     }
 
-    // 1) Obtener ID_ROL a partir de codigo_rol
+    // 1) ID_ROL a partir del CODIGO_ROL
     const [rolRows] = await pool.query(
       'SELECT ID_ROL FROM rol WHERE CODIGO_ROL = ? LIMIT 1',
       [codigo_rol]
@@ -36,26 +28,25 @@ module.exports = async (req, res, next) => {
     }
     const idRol = rolRows[0].ID_ROL;
 
-    // 2) Grados permitidos desde rol_grado
+    // 2) Grados permitidos desde rol_grado (COL CORRECTA: NRO_GRADO)
     const [gradoRows] = await pool.query(
-      'SELECT GRADO FROM rol_grado WHERE ID_ROL = ? ORDER BY GRADO',
+      'SELECT NRO_GRADO FROM rol_grado WHERE ID_ROL = ? ORDER BY NRO_GRADO',
       [idRol]
     );
-    const allowedGrades = gradoRows.map(r => Number(r.GRADO));
+    const allowedGrades = gradoRows.map(r => Number(r.NRO_GRADO)).filter(n => !Number.isNaN(n));
 
     if (!allowedGrades.length) {
-      // Rol sin grados asignados => sin acceso
       req.user.allowedGrades = [];
       req.user.allowedSections = [];
       return res.status(403).json({ message: 'No tienes grados asignados' });
     }
 
-    // 3) Secciones permitidas: todas las secciones que existan para esos grados (nivel Secundaria = 3)
-    // Año lectivo configurable por ENV; si no, usaremos el actual o 2025 como fallback.
-    const anioLectivo = Number(process.env.ANIO_LECTIVO) || 2025;
+    // 3) Secciones permitidas para esos grados (nivel secundaria=3, año lectivo configurable)
+    const NIVEL_SECUNDARIA = 3;
+    const ANIO_LECTIVO = Number(process.env.ANIO_LECTIVO) || 2025;
 
     const placeholders = allowedGrades.map(() => '?').join(',');
-    const params = [...allowedGrades, 3, anioLectivo];
+    const params = [...allowedGrades, NIVEL_SECUNDARIA, ANIO_LECTIVO];
 
     const [secRows] = await pool.query(
       `
@@ -68,13 +59,14 @@ module.exports = async (req, res, next) => {
       `,
       params
     );
-    const allowedSections = secRows.map(r => Number(r.ID_SECCION));
+    const allowedSections = secRows.map(r => Number(r.ID_SECCION)).filter(n => !Number.isNaN(n));
 
+    // Colgar permisos en req.user
     req.user.isAdmin = false;
     req.user.allowedGrades = allowedGrades;
     req.user.allowedSections = allowedSections;
 
-    // Si la ruta tiene :grado / :seccion, valida de inmediato
+    // Validación rápida si la ruta trae :grado / :seccion
     const gradoParam = req.params?.grado ? Number(req.params.grado) : null;
     if (gradoParam !== null && !allowedGrades.includes(gradoParam)) {
       return res.status(403).json({ message: 'No tienes permiso para este grado' });

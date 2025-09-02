@@ -29,7 +29,7 @@ const router = express.Router();
  */
 router.post('/login', async (req, res) => {
   const { usuario, password } = req.body;
-
+  
   try {
     // Trae al usuario y su rol (alias en camelCase para evitar confusiones)
     const [rows] = await pool.query(
