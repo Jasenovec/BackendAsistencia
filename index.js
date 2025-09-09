@@ -8,12 +8,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware globales
-app.use(
-  cors({
-    origin: "http://localhost:4200", // ⚠️ ajusta según tu frontend
-    credentials: true, // por si luego manejas cookies/JWT con HttpOnly
-  })
-);
+const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);              // same-origin o curl
+    if (!allowed.length || allowed.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}))
+;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
