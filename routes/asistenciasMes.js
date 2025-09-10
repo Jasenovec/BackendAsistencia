@@ -4,53 +4,40 @@ const pool = require('../database');
 const auth = require('../middlewares/auth');
 const roleGrades = require('../middlewares/roleGrades');
 
-// Autenticación y permisos
 router.use(auth);
 router.use(roleGrades);
 
 /**
- * 📅 ASISTENCIAS MENSUALES ENDPOINT (POSTMAN)
- *
- * # Obtener asistencias del mes y año
- * GET http://localhost:3000/asistencias-mes?mes=9&anio=2025
- * Headers:
- *   Authorization: Bearer <TOKEN_JWT>
- *
- * - Admin => ve todos los grados/secciones
- * - Auxiliar mañana => solo grados 4 y 5
- * - Auxiliar tarde => solo grados 1, 2 y 3
- */
-
-
-/**
- * GET /
- * Query: ?mes=&anio=
- * Usa tu consulta original, y añade filtros por grado/sección del usuario (si no es admin).
+ * GET /asistencias-mes?mes=9&anio=2025
  */
 router.get('/', async (req, res) => {
     try {
-        const { mes, anio } = req.query;
+        const mes = parseInt(req.query.mes, 10);
+        const anio = parseInt(req.query.anio, 10);
 
-        if (!mes || !anio) {
+        if (!Number.isInteger(mes) || !Number.isInteger(anio)) {
             return res.status(400).json({ error: 'Parámetros mes y anio son obligatorios' });
         }
 
-        // Consulta base intacta
+        // Si tus timestamps están en UTC y tu zona es -05:00, usa CONVERT_TZ(..., '+00:00','-05:00')
+        // const fechaExpr = "DATE_FORMAT(CONVERT_TZ(a.fecha,'+00:00','-05:00'), '%Y-%m-%d')";
+        const fechaExpr = "DATE_FORMAT(a.fecha, '%Y-%m-%d')"; // ✅ suficiente si MySQL ya está en tu TZ
+
         let sql = `
       SELECT 
-        e.id_estudiante, 
-        p.apellido_paterno, 
-        p.apellido_materno, 
-        p.nombres, 
-        ge.nro_grado, 
-        s.seccion,
-        a.fecha, 
+        e.id_estudiante,
+        p.apellido_paterno,
+        p.apellido_materno,
+        p.nombres,
+        ge.nro_grado AS nro_grado,
+        s.seccion     AS seccion,
+        ${fechaExpr}  AS fecha,
         a.estado_asistencia
       FROM estudiante e
       INNER JOIN persona p ON e.id_persona = p.id_persona
       INNER JOIN grado_estudiante ge ON ge.id_estudiante = e.id_estudiante
       INNER JOIN seccion s ON s.id_seccion = ge.id_seccion
-      LEFT JOIN asistencia a 
+      LEFT JOIN asistencia a
         ON a.id_estudiante = e.id_estudiante
        AND MONTH(a.fecha) = ? AND YEAR(a.fecha) = ?
       WHERE 1=1
@@ -58,19 +45,16 @@ router.get('/', async (req, res) => {
 
         const params = [mes, anio];
 
-        // Filtros por rol (si no admin)
         if (!req.user.isAdmin) {
-            const grades = req.user.allowedGrades || [];
-            const sections = req.user.allowedSections || [];
+            const grades = Array.isArray(req.user.allowedGrades) ? req.user.allowedGrades : [];
+            const sections = Array.isArray(req.user.allowedSections) ? req.user.allowedSections : [];
 
-            if (!grades.length) {
-                return res.json([]); // sin acceso a ningún grado
-            }
+            if (!grades.length) return res.json([]);
 
             sql += ` AND ge.nro_grado IN (${grades.map(() => '?').join(',')}) `;
             params.push(...grades);
 
-            // Si tienes allowedSections calculadas, filtramos también
+            // ⚠️ Aquí filtramos por ID de sección; asegúrate de que allowedSections contenga IDs (no letras)
             if (sections.length) {
                 sql += ` AND ge.id_seccion IN (${sections.map(() => '?').join(',')}) `;
                 params.push(...sections);
@@ -78,7 +62,12 @@ router.get('/', async (req, res) => {
         }
 
         sql += `
-      ORDER BY ge.nro_grado, s.seccion, p.apellido_paterno, p.apellido_materno
+      ORDER BY ge.nro_grado,
+               s.seccion,
+               p.apellido_paterno,
+               p.apellido_materno,
+               p.nombres,
+               a.fecha
     `;
 
         const [rows] = await pool.query(sql, params);
@@ -90,6 +79,3 @@ router.get('/', async (req, res) => {
 });
 
 module.exports = router;
-
-// Nota: Este endpoint asume que los roles y sus permisos están definidos en el middleware roleGrades.js
-// y que el middleware authMiddleware.js agrega el usuario a req.user
