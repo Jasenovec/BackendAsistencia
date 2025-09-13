@@ -19,6 +19,7 @@ const asistenciaRoutes = require("./routes/asistencia");
 const parametrosRoutes = require("./routes/parametros");
 const asistenciasMesRoutes = require("./routes/asistenciasMes");
 const authRoutes = require("./routes/auth");
+const incidenciaRoutes = require("./routes/incidencias");
 
 // Usamos las rutas  de alumnos
 app.use('/estudiante', estudianteRoutes);
@@ -26,6 +27,7 @@ app.use('/asistencia', asistenciaRoutes);
 app.use('/parametros', parametrosRoutes);
 app.use('/asistencias-mes', asistenciasMesRoutes);
 app.use('/auth', authRoutes);
+app.use('/incidencias', incidenciaRoutes);
 
 // Ruta de prueba
 app.get("/", (req, res) => {

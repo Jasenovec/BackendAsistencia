@@ -42,19 +42,20 @@ module.exports = async (req, res, next) => {
     }
 
     // 3) Secciones permitidas para esos grados (nivel secundaria=3, año lectivo configurable)
-    const NIVEL_SECUNDARIA = 3;
+    const NIVEL_CODIGO = process.env.NIVEL_CODIGO || 'secundaria';
     const ANIO_LECTIVO = Number(process.env.ANIO_LECTIVO) || 2025;
 
     const placeholders = allowedGrades.map(() => '?').join(',');
-    const params = [...allowedGrades, NIVEL_SECUNDARIA, ANIO_LECTIVO];
+    const params = [...allowedGrades, NIVEL_CODIGO, ANIO_LECTIVO];
 
     const [secRows] = await pool.query(
       `
       SELECT DISTINCT g.ID_SECCION
       FROM grado_estudiante g
+      JOIN nivel n        ON n.ID_NIVEL = g.ID_NIVEL
       JOIN anio_lectivo a ON a.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
       WHERE g.NRO_GRADO IN (${placeholders})
-        AND g.ID_NIVEL = ?
+        AND n.CODIGO_NIVEL = ?
         AND a.NRO_ANIO = ?
       `,
       params

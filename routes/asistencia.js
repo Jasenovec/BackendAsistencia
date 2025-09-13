@@ -64,6 +64,8 @@ router.use(auth);
  *   Authorization: Bearer <TOKEN_JWT>
  */
 
+const ANIO_LECTIVO = Number(process.env.ANIO_LECTIVO) || 2025;
+const NIVEL_CODIGO = process.env.NIVEL_CODIGO || 'secundaria';
 
 /** Helpers de filtros por rol (grado y sección) */
 function isAdmin(user) {
@@ -127,11 +129,15 @@ router.get('/', roleGrades, async (req, res) => {
     INNER JOIN \`persona\` p ON e.ID_PERSONA = p.ID_PERSONA
     INNER JOIN \`grado_estudiante\` g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
     INNER JOIN \`seccion\` s ON g.ID_SECCION = s.ID_SECCION
-    WHERE 1=1
+    INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+    INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+    WHERE n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
   `;
+  const baseParams = [NIVEL_CODIGO, ANIO_LECTIVO];
+
   try {
     const { clause, params } = buildAllowedFilters(req.user, 'g', 's');
-    const [rows] = await pool.query(`${baseSql} ${clause} ORDER BY a.FECHA DESC`, params);
+    const [rows] = await pool.query(`${baseSql} ${clause} ORDER BY a.FECHA DESC`, [...baseParams, ...params]);
     res.json(rows);
   } catch (err) {
     console.error('❌ Error al obtener asistencias:', err);
@@ -156,11 +162,14 @@ router.get('/historial', roleGrades, async (req, res) => {
     INNER JOIN \`estudiante\` e ON a.ID_ESTUDIANTE = e.ID_ESTUDIANTE
     INNER JOIN \`grado_estudiante\` g ON g.ID_ESTUDIANTE = e.ID_ESTUDIANTE
     INNER JOIN \`seccion\` s ON g.ID_SECCION = s.ID_SECCION
-    WHERE 1=1
+    INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+    INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+    WHERE n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
   `;
+  const baseParams = [NIVEL_CODIGO, ANIO_LECTIVO];
   try {
     const { clause, params } = buildAllowedFilters(req.user, 'g', 's');
-    const [rows] = await pool.query(`${baseSql} ${clause} ORDER BY h.FECHA_MODIFICACION DESC`, params);
+    const [rows] = await pool.query(`${baseSql} ${clause} ORDER BY h.FECHA_MODIFICACION DESC`, [...baseParams, ...params]);
     res.json(rows);
   } catch (err) {
     console.error('❌ Error al obtener el historial:', err);
@@ -191,11 +200,14 @@ router.get('/:grado/:seccion', roleGrades, async (req, res) => {
     INNER JOIN \`persona\` p ON e.ID_PERSONA = p.ID_PERSONA
     INNER JOIN \`grado_estudiante\` g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
     INNER JOIN \`seccion\` s ON g.ID_SECCION = s.ID_SECCION
-    WHERE g.NRO_GRADO = ? AND s.ID_SECCION = ?
+    INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+    INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+    WHERE n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
+      AND g.NRO_GRADO = ? AND s.ID_SECCION = ?
     ORDER BY a.FECHA DESC
   `;
   try {
-    const [rows] = await pool.query(sql, [grado, seccion]);
+    const [rows] = await pool.query(sql, [NIVEL_CODIGO, ANIO_LECTIVO, grado, seccion]);
     res.json(rows);
   } catch (err) {
     console.error('❌ Error al obtener asistencias filtradas:', err);
@@ -226,11 +238,14 @@ router.get('/:grado/:seccion/:fecha', roleGrades, async (req, res) => {
     INNER JOIN \`persona\` p ON e.ID_PERSONA = p.ID_PERSONA
     INNER JOIN \`grado_estudiante\` g ON e.ID_ESTUDIANTE = g.ID_ESTUDIANTE
     INNER JOIN \`seccion\` s ON g.ID_SECCION = s.ID_SECCION
-    WHERE g.NRO_GRADO = ? AND s.ID_SECCION = ? AND DATE(a.FECHA) = ?
+    INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+    INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+    WHERE n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
+      AND g.NRO_GRADO = ? AND s.ID_SECCION = ? AND DATE(a.FECHA) = ?
     ORDER BY a.FECHA DESC
   `;
   try {
-    const [rows] = await pool.query(sql, [grado, seccion, fecha]);
+    const [rows] = await pool.query(sql, [NIVEL_CODIGO, ANIO_LECTIVO, grado, seccion, fecha]);
     res.json(rows);
   } catch (err) {
     console.error('❌ Error al obtener asistencias filtradas:', err);
@@ -248,14 +263,14 @@ router.post('/', roleGrades, async (req, res) => {
 
   try {
     // Obtener grado y sección del estudiante
-    const [gs] = await pool.query(
-      `
+    const [gs] = await pool.query(`
       SELECT g.NRO_GRADO, g.ID_SECCION
       FROM \`grado_estudiante\` g
-      WHERE g.ID_ESTUDIANTE = ? LIMIT 1
-      `,
-      [id_estudiante]
-    );
+      INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+      INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+      WHERE g.ID_ESTUDIANTE = ? AND n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
+      LIMIT 1
+    `, [id_estudiante, NIVEL_CODIGO, ANIO_LECTIVO]);
     if (!gs.length) {
       return res.status(404).json({ error: 'Estudiante no encontrado' });
     }
@@ -306,10 +321,15 @@ router.put('/:id_asistencia', roleGrades, async (req, res) => {
     const asis = rowsAsis[0];
 
     // Verificar grado y sección del estudiante
-    const [gs] = await conn.query(
-      'SELECT g.NRO_GRADO, g.ID_SECCION FROM `grado_estudiante` g WHERE g.ID_ESTUDIANTE = ? LIMIT 1',
-      [asis.ID_ESTUDIANTE]
-    );
+    const [gs] = await conn.query(`
+      SELECT g.NRO_GRADO, g.ID_SECCION
+      FROM \`grado_estudiante\` g
+      INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+      INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+      WHERE g.ID_ESTUDIANTE = ? AND n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
+      LIMIT 1
+    `, [asis.ID_ESTUDIANTE, NIVEL_CODIGO, ANIO_LECTIVO]);
+
     const denied = assertAccessByParams(req.user, gs?.[0]?.NRO_GRADO, gs?.[0]?.ID_SECCION);
     if (denied) {
       await conn.rollback();
@@ -363,16 +383,15 @@ router.delete('/:id_asistencia', roleGrades, async (req, res) => {
   const { id_asistencia } = req.params;
   try {
     // verificar grado/sección del registro
-    const [rows] = await pool.query(
-      `
+    const [rows] = await pool.query(`
       SELECT g.NRO_GRADO, g.ID_SECCION
       FROM \`asistencia\` a
       INNER JOIN \`estudiante\` e ON a.ID_ESTUDIANTE = e.ID_ESTUDIANTE
       INNER JOIN \`grado_estudiante\` g ON g.ID_ESTUDIANTE = e.ID_ESTUDIANTE
-      WHERE a.ID_ASISTENCIA = ?
-      `,
-      [id_asistencia]
-    );
+      INNER JOIN \`nivel\` n ON n.ID_NIVEL = g.ID_NIVEL
+      INNER JOIN \`anio_lectivo\` al ON al.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+      WHERE a.ID_ASISTENCIA = ? AND n.CODIGO_NIVEL = ? AND al.NRO_ANIO = ?
+    `, [id_asistencia, NIVEL_CODIGO, ANIO_LECTIVO]);
     if (!rows.length) {
       return res.status(404).json({ error: 'Asistencia no encontrada' });
     }

@@ -10,7 +10,7 @@ router.use(roleGrades);
 
 // Año lectivo (ENV o default 2025)
 const ANIO_LECTIVO = Number(process.env.ANIO_LECTIVO) || 2025;
-const NIVEL_SECUNDARIA = 3;
+const NIVEL_CODIGO = process.env.NIVEL_CODIGO || 'secundaria'; // ✅
 
 /**
  * ⚙️ PARÁMETROS ENDPOINTS (POSTMAN)
@@ -45,10 +45,11 @@ router.get('/grados', async (req, res) => {
     let sql = `
       SELECT DISTINCT g.NRO_GRADO
       FROM grado_estudiante g
+      JOIN nivel n        ON n.ID_NIVEL = g.ID_NIVEL
       JOIN anio_lectivo a ON a.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
-      WHERE g.ID_NIVEL = ? AND a.NRO_ANIO = ?
+      WHERE n.CODIGO_NIVEL = ? AND a.NRO_ANIO = ?
     `;
-    const params = [NIVEL_SECUNDARIA, ANIO_LECTIVO];
+    const params = [NIVEL_CODIGO, ANIO_LECTIVO];
 
     if (!req.user.isAdmin) {
       const grades = req.user.allowedGrades || [];
@@ -81,10 +82,11 @@ router.get('/secciones', async (req, res) => {
       SELECT DISTINCT s.ID_SECCION, s.SECCION
       FROM seccion s
       JOIN grado_estudiante g ON g.ID_SECCION = s.ID_SECCION
-      JOIN anio_lectivo a ON a.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
-      WHERE g.ID_NIVEL = ? AND a.NRO_ANIO = ?
+      JOIN nivel n            ON n.ID_NIVEL = g.ID_NIVEL
+      JOIN anio_lectivo a     ON a.ID_ANIO_LECTIVO = g.ID_ANIO_LECTIVO
+      WHERE n.CODIGO_NIVEL = ? AND a.NRO_ANIO = ?
     `;
-    const params = [NIVEL_SECUNDARIA, ANIO_LECTIVO];
+    const params = [NIVEL_CODIGO, ANIO_LECTIVO];
 
     if (!req.user.isAdmin) {
       const sections = req.user.allowedSections || [];
